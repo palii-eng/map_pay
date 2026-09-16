@@ -69,7 +69,9 @@ export function MapView() {
   // фіксує загальний вигляд України одразу, коли карта готова (а не в окремому
   // ефекті MapView — той монтується ще під час екрана завантаження, тобто до
   // появи самої карти, і onMapReady ніколи не перезапускається з порожніми deps);
-  // цей масштаб — мінімальний і водночас дефолтний рівень (×1), можна наближувати до ×4
+  // ×1 (весь вигляд України) — мінімальний рівень, можна наближувати до ×4.
+  // На мобільних (< 640px, межа Tailwind sm:) стартуємо одразу з ×3 — на такому
+  // екрані вся країна відразу занадто дрібна, щоб тицяти по локаціях
   function handleMapReady(map: L.Map) {
     mapRef.current = map
     // animate: false — fitBounds інакше анімований і getZoom() одразу після виклику
@@ -79,6 +81,11 @@ export function MapView() {
     map.setMinZoom(z)
     map.setMaxZoom(z + 1.5)
     setBaseZoom(z)
+
+    const isMobile = window.innerWidth < 640
+    if (isMobile) {
+      map.setZoom(z + 1, { animate: false })
+    }
   }
 
   const zoomStep = Math.round((zoom - baseZoom) / 0.5) + 1
