@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { FeatureCollection } from 'geojson'
 import { loadGeoData, regionProps } from '../lib/geo'
-import { DEFAULT_BRAND_COLOR, PRICE_STEP, START_PRICE } from '../config'
+import { DEFAULT_BRAND_COLOR, START_PRICE } from '../config'
 import { OBLAST_CENTERS } from '../data/oblastCenters'
 import { supabase } from '../lib/supabaseClient'
 import type {
@@ -18,10 +18,25 @@ import type {
 
 type Status = 'idle' | 'loading' | 'ready' | 'error'
 
-export interface PurchaseResult {
+export interface WayForPayFields {
+  merchantAccount: string
+  merchantDomainName: string
+  orderReference: string
+  orderDate: number
+  amount: number
+  currency: string
+  productName: string[]
+  productCount: number[]
+  productPrice: number[]
+  merchantSignature: string
+  returnUrl: string
+  serviceUrl: string
+}
+
+export interface PaymentIntentResult {
   ok: boolean
   reason?: string
-  record?: PurchaseRecord
+  fields?: WayForPayFields
 }
 
 export interface CreateArticleResult {
@@ -74,12 +89,8 @@ interface AppState {
   setActiveBrand: (id: string) => void
   updateBrandProfile: (brandId: string, input: BrandProfileInput) => Promise<void>
 
-  purchaseLocation: (locationId: string, brandId: string) => Promise<PurchaseResult>
+  createPaymentIntent: (locationId: string, brandId: string) => Promise<PaymentIntentResult>
   createArticle: (brandId: string, input: ArticleInput) => Promise<CreateArticleResult>
-}
-
-function uid(prefix: string) {
-  return `${prefix}_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`
 }
 
 // ---- мапери рядків Supabase (snake_case) у типи фронтенду (camelCase) ----
@@ -372,7 +383,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => ({ brands: { ...s.brands, [brandId]: mapBrand(data) } }))
   },
 
-  purchaseLocation: async (locationId, brandId) => {
+  createPaymentIntent: async (locationId, brandId) => {
     const state = get()
     const location = state.locations[locationId]
     const brand = state.brands[brandId]
@@ -387,67 +398,19 @@ export const useAppStore = create<AppState>((set, get) => ({
       return { ok: false, reason: 'Не можна поглинути власну локацію' }
     }
 
-    const { data, error } = await supabase.rpc('purchase_location', {
-      p_location_id: locationId,
-      p_brand_id: brandId,
-      p_kind: location.kind,
-      p_name: location.name,
-      p_parent_region_id: location.parentRegionId ?? null,
-      p_parent_region_name: location.parentRegionName ?? null,
-      p_start_price: START_PRICE,
-      p_price_step: PRICE_STEP,
+    const { data, error } = await supabase.functions.invoke('wayforpay-create-payment', {
+      body: {
+        locationId,
+        brandId,
+        kind: location.kind,
+        name: location.name,
+        parentRegionId: location.parentRegionId ?? null,
+        parentRegionName: location.parentRegionName ?? null,
+      },
     })
     if (error) return { ok: false, reason: error.message }
-    const row = (Array.isArray(data) ? data[0] : data) as
-      | { price: number; previous_brand_id: string | null; previous_brand_name: string | null; next_price: number }
-      | undefined
-    if (!row) return { ok: false, reason: 'Невідома помилка' }
-
-    const record: PurchaseRecord = {
-      id: uid('purchase'),
-      brandId,
-      brandName: brand.name,
-      price: row.price,
-      timestamp: Date.now(),
-      previousBrandId: row.previous_brand_id,
-      previousBrandName: row.previous_brand_name,
-    }
-
-    const updatedLocation: LocationState = {
-      ...location,
-      ownerBrandId: brandId,
-      lastPrice: row.price,
-      nextPrice: row.next_price,
-      history: [record, ...location.history],
-    }
-
-    const event: ActivityEvent = {
-      id: uid('event'),
-      type: row.previous_brand_id ? 'absorb' : 'occupy',
-      locationId: location.id,
-      locationName: location.name,
-      locationKind: location.kind,
-      parentRegionId: location.kind === 'city' ? (location.parentRegionId ?? null) : null,
-      brandId,
-      brandName: brand.name,
-      brandColor: brand.color,
-      brandLogoDataUrl: brand.logoDataUrl,
-      previousBrandId: row.previous_brand_id,
-      previousBrandName: row.previous_brand_name,
-      price: row.price,
-      timestamp: record.timestamp,
-    }
-
-    set((s) => ({
-      locations: { ...s.locations, [locationId]: updatedLocation },
-      activity: [event, ...s.activity].slice(0, 200),
-      brands: {
-        ...s.brands,
-        [brandId]: { ...brand, articleCreditsAvailable: brand.articleCreditsAvailable + 1 },
-      },
-    }))
-
-    return { ok: true, record }
+    if (data?.error) return { ok: false, reason: data.error as string }
+    return { ok: true, fields: data as WayForPayFields }
   },
 
   createArticle: async (brandId, input) => {

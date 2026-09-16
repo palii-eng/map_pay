@@ -1,22 +1,49 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { Modal } from '../common/Modal'
 import { BrandBadge } from '../common/BrandBadge'
 import { BrandForm } from './BrandForm'
 import { LoginForm } from '../auth/LoginForm'
-import { useAppStore, type PurchaseResult } from '../../store/useAppStore'
+import { useAppStore, type WayForPayFields } from '../../store/useAppStore'
 import { formatMoney, regionTypeLabel } from '../../lib/format'
 
 interface PurchaseFlowProps {
   locationId: string
   onClose: () => void
-  onSuccess: () => void
 }
 
-type Phase = 'confirm' | 'processing' | 'success' | 'error'
+type Phase = 'confirm' | 'processing' | 'error'
 
-export function PurchaseFlow({ locationId, onClose, onSuccess }: PurchaseFlowProps) {
-  const navigate = useNavigate()
+function redirectToWayForPay(fields: WayForPayFields) {
+  const form = document.createElement('form')
+  form.method = 'POST'
+  form.action = 'https://secure.wayforpay.com/pay'
+
+  function addField(name: string, value: string) {
+    const input = document.createElement('input')
+    input.type = 'hidden'
+    input.name = name
+    input.value = value
+    form.appendChild(input)
+  }
+
+  addField('merchantAccount', fields.merchantAccount)
+  addField('merchantDomainName', fields.merchantDomainName)
+  addField('orderReference', fields.orderReference)
+  addField('orderDate', String(fields.orderDate))
+  addField('amount', String(fields.amount))
+  addField('currency', fields.currency)
+  fields.productName.forEach((v) => addField('productName[]', v))
+  fields.productCount.forEach((v) => addField('productCount[]', String(v)))
+  fields.productPrice.forEach((v) => addField('productPrice[]', String(v)))
+  addField('merchantSignature', fields.merchantSignature)
+  addField('returnUrl', fields.returnUrl)
+  addField('serviceUrl', fields.serviceUrl)
+
+  document.body.appendChild(form)
+  form.submit()
+}
+
+export function PurchaseFlow({ locationId, onClose }: PurchaseFlowProps) {
   const location = useAppStore((s) => s.locations[locationId])
   const currentUser = useAppStore((s) => s.currentUser)
   const myBrandIds = useAppStore((s) => s.myBrandIds)
@@ -24,12 +51,12 @@ export function PurchaseFlow({ locationId, onClose, onSuccess }: PurchaseFlowPro
   const activeBrandId = useAppStore((s) => s.activeBrandId)
   const createBrand = useAppStore((s) => s.createBrand)
   const setActiveBrand = useAppStore((s) => s.setActiveBrand)
-  const purchaseLocation = useAppStore((s) => s.purchaseLocation)
+  const createPaymentIntent = useAppStore((s) => s.createPaymentIntent)
 
   const [showBrandForm, setShowBrandForm] = useState(false)
   const [showBrandPicker, setShowBrandPicker] = useState(false)
   const [phase, setPhase] = useState<Phase>('confirm')
-  const [result, setResult] = useState<PurchaseResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     setShowBrandForm(myBrandIds.length === 0 && !!currentUser)
@@ -105,13 +132,13 @@ export function PurchaseFlow({ locationId, onClose, onSuccess }: PurchaseFlowPro
 
   const buyerBrand = activeBrand
 
-  // ---- Крок 4: обробка ----
+  // ---- Крок 4: перенаправлення на оплату ----
   if (phase === 'processing') {
     return (
-      <Modal title="Обробка оплати" onClose={() => {}} width="sm">
+      <Modal title="Перенаправляємо на оплату" onClose={() => {}} width="sm">
         <div className="flex flex-col items-center gap-3 py-6 text-slate-500">
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
-          <p className="text-sm">Підтверджуємо оплату на сервері…</p>
+          <p className="text-sm">Зараз відкриється сторінка оплати WayForPay…</p>
         </div>
       </Modal>
     )
@@ -120,58 +147,14 @@ export function PurchaseFlow({ locationId, onClose, onSuccess }: PurchaseFlowPro
   // ---- Крок 5: помилка ----
   if (phase === 'error') {
     return (
-      <Modal title="Не вдалося завершити покупку" onClose={onClose} width="sm">
-        <p className="text-sm text-slate-600">{result?.reason ?? 'Сталася невідома помилка.'}</p>
+      <Modal title="Не вдалося перейти до оплати" onClose={onClose} width="sm">
+        <p className="text-sm text-slate-600">{error ?? 'Сталася невідома помилка.'}</p>
         <button
           onClick={onClose}
           className="mt-4 w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
         >
           Закрити
         </button>
-      </Modal>
-    )
-  }
-
-  // ---- Крок 6: успіх ----
-  if (phase === 'success' && result?.ok && result.record) {
-    return (
-      <Modal title="Локацію отримано" onClose={onClose} width="sm">
-        <div className="flex flex-col items-center gap-2 py-2 text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M20 6 9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </div>
-          <p className="text-sm text-slate-600">
-            Бренд <span className="font-semibold text-slate-900">{buyerBrand.name}</span>{' '}
-            {isAbsorb ? 'поглинув(ла)' : 'зайняв'} локацію
-          </p>
-          <p className="text-base font-semibold text-slate-900">{location.name}</p>
-          <p className="text-sm text-slate-500">за {formatMoney(result.record.price)}</p>
-          <p className="mt-1 text-xs text-slate-400">
-            Доступних статей для публікації: {buyerBrand.articleCreditsAvailable}
-          </p>
-        </div>
-        <div className="mt-4 space-y-2">
-          <button
-            onClick={() => {
-              onSuccess()
-              onClose()
-            }}
-            className="w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
-          >
-            Переглянути на карті
-          </button>
-          <button
-            onClick={() => {
-              onClose()
-              navigate(`/companies/${buyerBrand.id}`, { state: { openArticleEditor: true } })
-            }}
-            className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-          >
-            Написати статтю
-          </button>
-        </div>
       </Modal>
     )
   }
@@ -223,17 +206,21 @@ export function PurchaseFlow({ locationId, onClose, onSuccess }: PurchaseFlowPro
         <button
           onClick={async () => {
             setPhase('processing')
-            const res = await purchaseLocation(location.id, buyerBrand.id)
-            setResult(res)
-            setPhase(res.ok ? 'success' : 'error')
+            const res = await createPaymentIntent(location.id, buyerBrand.id)
+            if (res.ok && res.fields) {
+              redirectToWayForPay(res.fields)
+            } else {
+              setError(res.reason ?? 'Сталася невідома помилка.')
+              setPhase('error')
+            }
           }}
           className="w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
         >
           Перейти до оплати · {formatMoney(price)}
         </button>
         <p className="text-center text-[11px] text-slate-400">
-          Демо-режим: платіжні дані Stripe/WayForPay ще не підключені, оплата симулюється — локація
-          зберігається в реальній базі даних.
+          Оплата проходить через WayForPay. Після підтвердження платежу локація одразу з'явиться на
+          карті вашого бренду.
         </p>
       </div>
     </Modal>

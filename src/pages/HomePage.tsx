@@ -5,10 +5,8 @@ import { ActivityFeed } from '../components/overlays/ActivityFeed'
 import { Leaderboard } from '../components/overlays/Leaderboard'
 import { PurchaseFlow } from '../components/purchase/PurchaseFlow'
 import { AboutSection } from '../components/landing/AboutSection'
-import { useAppStore } from '../store/useAppStore'
 
 export function HomePage() {
-  const selectLocation = useAppStore((s) => s.selectLocation)
   const [purchaseLocationId, setPurchaseLocationId] = useState<string | null>(null)
   const aboutRef = useRef<HTMLElement>(null)
   const mapScreenRef = useRef<HTMLElement>(null)
@@ -38,11 +36,7 @@ export function HomePage() {
         </button>
 
         {purchaseLocationId && (
-          <PurchaseFlow
-            locationId={purchaseLocationId}
-            onClose={() => setPurchaseLocationId(null)}
-            onSuccess={() => selectLocation(purchaseLocationId)}
-          />
+          <PurchaseFlow locationId={purchaseLocationId} onClose={() => setPurchaseLocationId(null)} />
         )}
       </section>
 
