@@ -90,6 +90,8 @@ interface AppState {
   updateBrandProfile: (brandId: string, input: BrandProfileInput) => Promise<void>
 
   createPaymentIntent: (locationId: string, brandId: string) => Promise<PaymentIntentResult>
+  checkPaymentIntent: (orderReference: string) => Promise<'pending' | 'paid' | 'failed' | 'not_found'>
+  refreshData: () => Promise<void>
   createArticle: (brandId: string, input: ArticleInput) => Promise<CreateArticleResult>
 }
 
@@ -411,6 +413,64 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (error) return { ok: false, reason: error.message }
     if (data?.error) return { ok: false, reason: data.error as string }
     return { ok: true, fields: data as WayForPayFields }
+  },
+
+  checkPaymentIntent: async (orderReference) => {
+    if (!supabase) return 'not_found'
+    const { data, error } = await supabase
+      .from('payment_intents')
+      .select('status')
+      .eq('order_reference', orderReference)
+      .maybeSingle()
+    if (error || !data) return 'not_found'
+    return data.status as 'pending' | 'paid' | 'failed'
+  },
+
+  refreshData: async () => {
+    if (!supabase) return
+    const [brandsRes, locationsRes, purchasesRes, activityRes, articlesRes] = await Promise.all([
+      supabase.from('brands').select('*'),
+      supabase.from('locations').select('*'),
+      supabase.from('purchases').select('*').order('created_at', { ascending: false }),
+      supabase.from('activity_events').select('*').order('created_at', { ascending: false }).limit(200),
+      supabase.from('articles').select('*').order('created_at', { ascending: false }),
+    ])
+
+    const brands: Record<string, Brand> = {}
+    for (const row of brandsRes.data ?? []) brands[row.id] = mapBrand(row)
+
+    set((s) => {
+      const locations: Record<string, LocationState> = {}
+      for (const [id, loc] of Object.entries(s.locations)) locations[id] = { ...loc, history: [] }
+
+      for (const row of locationsRes.data ?? []) {
+        const skeleton = locations[row.id as string]
+        if (!skeleton) continue
+        locations[row.id as string] = {
+          ...skeleton,
+          ownerBrandId: (row.owner_brand_id as string) ?? null,
+          lastPrice: (row.last_price as number) ?? null,
+          nextPrice: row.next_price as number,
+        }
+      }
+      for (const row of purchasesRes.data ?? []) {
+        const loc = locations[row.location_id as string]
+        if (!loc) continue
+        loc.history = [...loc.history, mapPurchase(row)]
+      }
+
+      const activity = (activityRes.data ?? []).map(mapActivity)
+      const articles: Record<string, Article> = {}
+      for (const row of articlesRes.data ?? []) articles[row.id] = mapArticle(row)
+
+      const myBrandIds = s.currentUser
+        ? Object.values(brands)
+            .filter((b) => b.ownerUserId === s.currentUser!.id)
+            .map((b) => b.id)
+        : s.myBrandIds
+
+      return { locations, brands, activity, articles, myBrandIds }
+    })
   },
 
   createArticle: async (brandId, input) => {
