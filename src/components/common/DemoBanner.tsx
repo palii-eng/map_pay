@@ -15,8 +15,9 @@ export function DemoBanner() {
     <div className="pointer-events-auto flex items-start gap-2 rounded-xl bg-amber-50 px-3.5 py-2.5 text-xs text-amber-800 shadow-md ring-1 ring-amber-200 backdrop-blur">
       <span className="mt-0.5 text-sm">⚠️</span>
       <p className="flex-1">
-        <span className="font-semibold">Тестовий режим.</span> Оплата, авторизація і бренди зберігаються
-        лише локально у вашому браузері — бекенд (бази даних, Stripe, email) ще не підключено.
+        <span className="font-semibold">Тестовий режим.</span> Дані бренду, покупки й статті вже
+        зберігаються в реальній базі даних — але оплата поки симулюється, платіжний провайдер ще не
+        підключено.
       </p>
       <button
         onClick={() => {

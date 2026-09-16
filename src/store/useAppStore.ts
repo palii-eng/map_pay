@@ -1,10 +1,9 @@
 import { create } from 'zustand'
 import type { FeatureCollection } from 'geojson'
 import { loadGeoData, regionProps } from '../lib/geo'
-import { nextPriceAfter } from '../lib/pricing'
-import { DEFAULT_BRAND_COLOR, START_PRICE } from '../config'
+import { DEFAULT_BRAND_COLOR, PRICE_STEP, START_PRICE } from '../config'
 import { OBLAST_CENTERS } from '../data/oblastCenters'
-import { buildDemoSeed } from '../data/demoSeed'
+import { supabase } from '../lib/supabaseClient'
 import type {
   ActivityEvent,
   Article,
@@ -13,6 +12,7 @@ import type {
   BrandProfileInput,
   LocationState,
   MockUser,
+  PurchaseRecord,
   RegionProps,
 } from '../types'
 
@@ -21,13 +21,18 @@ type Status = 'idle' | 'loading' | 'ready' | 'error'
 export interface PurchaseResult {
   ok: boolean
   reason?: string
-  record?: LocationState['history'][number]
+  record?: PurchaseRecord
 }
 
 export interface CreateArticleResult {
   ok: boolean
   reason?: string
   articleId?: string
+}
+
+export interface AuthResult {
+  ok: boolean
+  reason?: string
 }
 
 interface NewBrandInput {
@@ -62,18 +67,90 @@ interface AppState {
   init: () => Promise<void>
   selectLocation: (id: string | null) => void
 
-  mockLogin: (email: string) => void
-  mockLogout: () => void
-  createBrand: (input: NewBrandInput) => string
+  requestLoginCode: (email: string) => Promise<AuthResult>
+  verifyLoginCode: (email: string, code: string) => Promise<AuthResult>
+  logout: () => Promise<void>
+  createBrand: (input: NewBrandInput) => Promise<string>
   setActiveBrand: (id: string) => void
-  updateBrandProfile: (brandId: string, input: BrandProfileInput) => void
+  updateBrandProfile: (brandId: string, input: BrandProfileInput) => Promise<void>
 
-  purchaseLocation: (locationId: string, brandId: string) => PurchaseResult
-  createArticle: (brandId: string, input: ArticleInput) => CreateArticleResult
+  purchaseLocation: (locationId: string, brandId: string) => Promise<PurchaseResult>
+  createArticle: (brandId: string, input: ArticleInput) => Promise<CreateArticleResult>
 }
 
 function uid(prefix: string) {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`
+}
+
+// ---- мапери рядків Supabase (snake_case) у типи фронтенду (camelCase) ----
+
+function mapBrand(row: Record<string, unknown>): Brand {
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    description: row.description as string,
+    color: row.color as string,
+    logoDataUrl: (row.logo_data_url as string) ?? undefined,
+    website: (row.website as string) ?? undefined,
+    address: (row.address as string) ?? undefined,
+    phone: (row.phone as string) ?? undefined,
+    contactEmail: (row.contact_email as string) ?? undefined,
+    instagram: (row.instagram as string) ?? undefined,
+    facebook: (row.facebook as string) ?? undefined,
+    ownerUserId: row.owner_user_id as string,
+    articleCreditsAvailable: row.article_credits_available as number,
+    articleCreditsUsed: row.article_credits_used as number,
+    createdAt: new Date(row.created_at as string).getTime(),
+  }
+}
+
+function mapArticle(row: Record<string, unknown>): Article {
+  return {
+    id: row.id as string,
+    brandId: row.brand_id as string,
+    title: row.title as string,
+    excerpt: row.excerpt as string,
+    content: row.content as string,
+    coverImageDataUrl: (row.cover_image_data_url as string) ?? undefined,
+    status: 'published',
+    createdAt: new Date(row.created_at as string).getTime(),
+  }
+}
+
+function mapActivity(row: Record<string, unknown>): ActivityEvent {
+  return {
+    id: row.id as string,
+    type: row.type as 'occupy' | 'absorb',
+    locationId: row.location_id as string,
+    locationName: row.location_name as string,
+    locationKind: row.location_kind as 'region' | 'city',
+    parentRegionId: (row.parent_region_id as string) ?? null,
+    brandId: row.brand_id as string,
+    brandName: row.brand_name as string,
+    brandColor: row.brand_color as string,
+    brandLogoDataUrl: (row.brand_logo_data_url as string) ?? undefined,
+    previousBrandId: (row.previous_brand_id as string) ?? null,
+    previousBrandName: (row.previous_brand_name as string) ?? null,
+    price: row.price as number,
+    timestamp: new Date(row.created_at as string).getTime(),
+  }
+}
+
+function mapPurchase(row: Record<string, unknown>): PurchaseRecord {
+  return {
+    id: row.id as string,
+    brandId: row.brand_id as string,
+    brandName: row.brand_name as string,
+    price: row.price as number,
+    timestamp: new Date(row.created_at as string).getTime(),
+    previousBrandId: (row.previous_brand_id as string) ?? null,
+    previousBrandName: (row.previous_brand_name as string) ?? null,
+  }
+}
+
+function currentUserFromSession(user: { id: string; email?: string | null } | null | undefined): MockUser | null {
+  if (!user?.email) return null
+  return { id: user.id, email: user.email }
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -101,15 +178,17 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (get().status === 'ready' || get().status === 'loading') return
     set({ status: 'loading', errorMessage: null })
     try {
+      if (!supabase) throw new Error('Supabase не налаштовано (відсутні змінні середовища)')
+
       const geo = await loadGeoData()
       const regionIndex: Record<string, RegionProps> = {}
       const cityIdByRegionId: Record<string, string> = {}
-      const locations: Record<string, LocationState> = {}
+      const skeletons: Record<string, LocationState> = {}
 
       for (const f of geo.regions.features) {
         const props = regionProps(f)
         regionIndex[props.id] = props
-        locations[props.id] = {
+        skeletons[props.id] = {
           id: props.id,
           kind: 'region',
           name: props.name,
@@ -124,7 +203,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       for (const center of OBLAST_CENTERS) {
         const cityId = `${center.regionId}__city`
         cityIdByRegionId[center.regionId] = cityId
-        locations[cityId] = {
+        skeletons[cityId] = {
           id: cityId,
           kind: 'city',
           name: center.name,
@@ -137,7 +216,50 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
       }
 
-      const demo = buildDemoSeed(locations)
+      const [brandsRes, locationsRes, purchasesRes, activityRes, articlesRes, sessionRes] = await Promise.all([
+        supabase.from('brands').select('*'),
+        supabase.from('locations').select('*'),
+        supabase.from('purchases').select('*').order('created_at', { ascending: false }),
+        supabase.from('activity_events').select('*').order('created_at', { ascending: false }).limit(200),
+        supabase.from('articles').select('*').order('created_at', { ascending: false }),
+        supabase.auth.getSession(),
+      ])
+
+      const firstError =
+        brandsRes.error || locationsRes.error || purchasesRes.error || activityRes.error || articlesRes.error
+      if (firstError) throw new Error(firstError.message)
+
+      const brands: Record<string, Brand> = {}
+      for (const row of brandsRes.data ?? []) brands[row.id] = mapBrand(row)
+
+      const locations = { ...skeletons }
+      for (const row of locationsRes.data ?? []) {
+        const skeleton = locations[row.id as string]
+        if (!skeleton) continue
+        locations[row.id as string] = {
+          ...skeleton,
+          ownerBrandId: (row.owner_brand_id as string) ?? null,
+          lastPrice: (row.last_price as number) ?? null,
+          nextPrice: row.next_price as number,
+        }
+      }
+      for (const row of purchasesRes.data ?? []) {
+        const loc = locations[row.location_id as string]
+        if (!loc) continue
+        loc.history = [...loc.history, mapPurchase(row)]
+      }
+
+      const activity = (activityRes.data ?? []).map(mapActivity)
+
+      const articles: Record<string, Article> = {}
+      for (const row of articlesRes.data ?? []) articles[row.id] = mapArticle(row)
+
+      const currentUser = currentUserFromSession(sessionRes.data.session?.user)
+      const myBrandIds = currentUser
+        ? Object.values(brands)
+            .filter((b) => b.ownerUserId === currentUser.id)
+            .map((b) => b.id)
+        : []
 
       set({
         status: 'ready',
@@ -145,10 +267,25 @@ export const useAppStore = create<AppState>((set, get) => ({
         cityContoursGeo: geo.cityContours,
         regionIndex,
         cityIdByRegionId,
-        locations: demo.locations,
-        brands: demo.brands,
-        activity: demo.activity,
-        articles: demo.articles,
+        locations,
+        brands,
+        activity,
+        articles,
+        currentUser,
+        myBrandIds,
+      })
+
+      supabase.auth.onAuthStateChange((_event, newSession) => {
+        const user = currentUserFromSession(newSession?.user)
+        set((s) => ({
+          currentUser: user,
+          myBrandIds: user
+            ? Object.values(s.brands)
+                .filter((b) => b.ownerUserId === user.id)
+                .map((b) => b.id)
+            : [],
+          activeBrandId: user ? s.activeBrandId : null,
+        }))
       })
     } catch (err) {
       set({
@@ -160,72 +297,86 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   selectLocation: (id) => set({ selectedLocationId: id }),
 
-  mockLogin: (email) => {
-    const id = `user_${email.toLowerCase()}`
-    set({ currentUser: { id, email } })
+  requestLoginCode: async (email) => {
+    if (!supabase) return { ok: false, reason: 'Supabase не налаштовано' }
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: { shouldCreateUser: true },
+    })
+    if (error) return { ok: false, reason: error.message }
+    return { ok: true }
   },
 
-  mockLogout: () =>
-    set({
-      currentUser: null,
-      myBrandIds: [],
-      activeBrandId: null,
-    }),
+  verifyLoginCode: async (email, code) => {
+    if (!supabase) return { ok: false, reason: 'Supabase не налаштовано' }
+    const { error } = await supabase.auth.verifyOtp({ email, token: code, type: 'email' })
+    if (error) return { ok: false, reason: error.message }
+    return { ok: true }
+  },
 
-  createBrand: (input) => {
+  logout: async () => {
+    if (supabase) await supabase.auth.signOut()
+    set({ currentUser: null, myBrandIds: [], activeBrandId: null })
+  },
+
+  createBrand: async (input) => {
     const user = get().currentUser
-    if (!user) throw new Error('Потрібна автентифікація для створення бренду')
-    const id = uid('brand')
-    const brand: Brand = {
-      id,
-      name: input.name.trim(),
-      description: input.description.trim(),
-      color: input.color || DEFAULT_BRAND_COLOR,
-      logoDataUrl: input.logoDataUrl,
-      website: input.website?.trim() || undefined,
-      ownerUserId: user.id,
-      articleCreditsAvailable: 0,
-      articleCreditsUsed: 0,
-      createdAt: Date.now(),
-    }
+    if (!user || !supabase) throw new Error('Потрібна автентифікація для створення бренду')
+    const { data, error } = await supabase
+      .from('brands')
+      .insert({
+        owner_user_id: user.id,
+        name: input.name.trim(),
+        description: input.description.trim(),
+        color: input.color || DEFAULT_BRAND_COLOR,
+        logo_data_url: input.logoDataUrl ?? null,
+        website: input.website?.trim() || null,
+      })
+      .select()
+      .single()
+    if (error || !data) throw new Error(error?.message ?? 'Не вдалося створити бренд')
+
+    const brand = mapBrand(data)
     set((s) => ({
-      brands: { ...s.brands, [id]: brand },
-      myBrandIds: [...s.myBrandIds, id],
-      activeBrandId: id,
+      brands: { ...s.brands, [brand.id]: brand },
+      myBrandIds: [...s.myBrandIds, brand.id],
+      activeBrandId: brand.id,
     }))
-    return id
+    return brand.id
   },
 
   setActiveBrand: (id) => set({ activeBrandId: id }),
 
-  updateBrandProfile: (brandId, input) => {
+  updateBrandProfile: async (brandId, input) => {
     const state = get()
     const brand = state.brands[brandId]
-    if (!brand || !state.currentUser || brand.ownerUserId !== state.currentUser.id) return
-    set((s) => ({
-      brands: {
-        ...s.brands,
-        [brandId]: {
-          ...brand,
-          name: input.name.trim(),
-          description: input.description.trim(),
-          color: input.color || DEFAULT_BRAND_COLOR,
-          logoDataUrl: input.logoDataUrl,
-          website: input.website?.trim() || undefined,
-          address: input.address?.trim() || undefined,
-          phone: input.phone?.trim() || undefined,
-          contactEmail: input.contactEmail?.trim() || undefined,
-          instagram: input.instagram?.trim() || undefined,
-          facebook: input.facebook?.trim() || undefined,
-        },
-      },
-    }))
+    if (!brand || !state.currentUser || brand.ownerUserId !== state.currentUser.id || !supabase) return
+    const { data, error } = await supabase
+      .from('brands')
+      .update({
+        name: input.name.trim(),
+        description: input.description.trim(),
+        color: input.color || DEFAULT_BRAND_COLOR,
+        logo_data_url: input.logoDataUrl ?? null,
+        website: input.website?.trim() || null,
+        address: input.address?.trim() || null,
+        phone: input.phone?.trim() || null,
+        contact_email: input.contactEmail?.trim() || null,
+        instagram: input.instagram?.trim() || null,
+        facebook: input.facebook?.trim() || null,
+      })
+      .eq('id', brandId)
+      .select()
+      .single()
+    if (error || !data) return
+    set((s) => ({ brands: { ...s.brands, [brandId]: mapBrand(data) } }))
   },
 
-  purchaseLocation: (locationId, brandId) => {
+  purchaseLocation: async (locationId, brandId) => {
     const state = get()
     const location = state.locations[locationId]
     const brand = state.brands[brandId]
+    if (!supabase) return { ok: false, reason: 'Supabase не налаштовано' }
     if (!state.currentUser) return { ok: false, reason: 'Потрібно увійти в акаунт' }
     if (!location) return { ok: false, reason: 'Локацію не знайдено' }
     if (!brand) return { ok: false, reason: 'Бренд не знайдено' }
@@ -236,31 +387,43 @@ export const useAppStore = create<AppState>((set, get) => ({
       return { ok: false, reason: 'Не можна поглинути власну локацію' }
     }
 
-    const price = location.nextPrice
-    const previousBrandId = location.ownerBrandId
-    const previousBrand = previousBrandId ? state.brands[previousBrandId] : null
+    const { data, error } = await supabase.rpc('purchase_location', {
+      p_location_id: locationId,
+      p_brand_id: brandId,
+      p_kind: location.kind,
+      p_name: location.name,
+      p_parent_region_id: location.parentRegionId ?? null,
+      p_parent_region_name: location.parentRegionName ?? null,
+      p_start_price: START_PRICE,
+      p_price_step: PRICE_STEP,
+    })
+    if (error) return { ok: false, reason: error.message }
+    const row = (Array.isArray(data) ? data[0] : data) as
+      | { price: number; previous_brand_id: string | null; previous_brand_name: string | null; next_price: number }
+      | undefined
+    if (!row) return { ok: false, reason: 'Невідома помилка' }
 
-    const record = {
+    const record: PurchaseRecord = {
       id: uid('purchase'),
       brandId,
       brandName: brand.name,
-      price,
+      price: row.price,
       timestamp: Date.now(),
-      previousBrandId: previousBrandId,
-      previousBrandName: previousBrand ? previousBrand.name : null,
+      previousBrandId: row.previous_brand_id,
+      previousBrandName: row.previous_brand_name,
     }
 
     const updatedLocation: LocationState = {
       ...location,
       ownerBrandId: brandId,
-      lastPrice: price,
-      nextPrice: nextPriceAfter(price),
+      lastPrice: row.price,
+      nextPrice: row.next_price,
       history: [record, ...location.history],
     }
 
     const event: ActivityEvent = {
       id: uid('event'),
-      type: previousBrandId ? 'absorb' : 'occupy',
+      type: row.previous_brand_id ? 'absorb' : 'occupy',
       locationId: location.id,
       locationName: location.name,
       locationKind: location.kind,
@@ -269,9 +432,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       brandName: brand.name,
       brandColor: brand.color,
       brandLogoDataUrl: brand.logoDataUrl,
-      previousBrandId,
-      previousBrandName: previousBrand ? previousBrand.name : null,
-      price,
+      previousBrandId: row.previous_brand_id,
+      previousBrandName: row.previous_brand_name,
+      price: row.price,
       timestamp: record.timestamp,
     }
 
@@ -280,19 +443,17 @@ export const useAppStore = create<AppState>((set, get) => ({
       activity: [event, ...s.activity].slice(0, 200),
       brands: {
         ...s.brands,
-        [brandId]: {
-          ...brand,
-          articleCreditsAvailable: brand.articleCreditsAvailable + 1,
-        },
+        [brandId]: { ...brand, articleCreditsAvailable: brand.articleCreditsAvailable + 1 },
       },
     }))
 
     return { ok: true, record }
   },
 
-  createArticle: (brandId, input) => {
+  createArticle: async (brandId, input) => {
     const state = get()
     const brand = state.brands[brandId]
+    if (!supabase) return { ok: false, reason: 'Supabase не налаштовано' }
     if (!state.currentUser) return { ok: false, reason: 'Потрібно увійти в акаунт' }
     if (!brand) return { ok: false, reason: 'Бренд не знайдено' }
     if (brand.ownerUserId !== state.currentUser.id) {
@@ -305,20 +466,19 @@ export const useAppStore = create<AppState>((set, get) => ({
       return { ok: false, reason: 'Заповніть заголовок і текст статті' }
     }
 
-    const id = uid('article')
-    const article: Article = {
-      id,
-      brandId,
-      title: input.title.trim(),
-      excerpt: input.excerpt.trim(),
-      content: input.content.trim(),
-      coverImageDataUrl: input.coverImageDataUrl,
-      status: 'published',
-      createdAt: Date.now(),
-    }
+    const { data, error } = await supabase.rpc('create_article', {
+      p_brand_id: brandId,
+      p_title: input.title.trim(),
+      p_excerpt: input.excerpt.trim(),
+      p_content: input.content.trim(),
+      p_cover_image_data_url: input.coverImageDataUrl ?? null,
+    })
+    if (error || !data) return { ok: false, reason: error?.message ?? 'Не вдалося опублікувати статтю' }
+    const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown>
+    const article = mapArticle(row)
 
     set((s) => ({
-      articles: { ...s.articles, [id]: article },
+      articles: { ...s.articles, [article.id]: article },
       brands: {
         ...s.brands,
         [brandId]: {
@@ -329,6 +489,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       },
     }))
 
-    return { ok: true, articleId: id }
+    return { ok: true, articleId: article.id }
   },
 }))

@@ -276,8 +276,8 @@ export default function CompanyPage() {
           <BrandProfileForm
             brand={brand}
             onCancel={() => setEditing(false)}
-            onSubmit={(input) => {
-              updateBrandProfile(brand.id, input)
+            onSubmit={async (input) => {
+              await updateBrandProfile(brand.id, input)
               setEditing(false)
             }}
           />
@@ -290,8 +290,8 @@ export default function CompanyPage() {
           <ArticleEditor
             creditsAvailable={brand.articleCreditsAvailable}
             onCancel={() => setWritingArticle(false)}
-            onSubmit={(input) => {
-              const res = createArticle(brand.id, input)
+            onSubmit={async (input) => {
+              const res = await createArticle(brand.id, input)
               if (res.ok) {
                 setWritingArticle(false)
                 setArticleError(null)

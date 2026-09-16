@@ -5,6 +5,7 @@ import { useAppStore } from '../../store/useAppStore'
 import { Modal } from '../common/Modal'
 import { BrandBadge } from '../common/BrandBadge'
 import { BrandForm } from '../purchase/BrandForm'
+import { LoginForm } from '../auth/LoginForm'
 
 export function TopBar() {
   const navigate = useNavigate()
@@ -12,13 +13,11 @@ export function TopBar() {
   const myBrandIds = useAppStore((s) => s.myBrandIds)
   const brands = useAppStore((s) => s.brands)
   const activeBrandId = useAppStore((s) => s.activeBrandId)
-  const mockLogin = useAppStore((s) => s.mockLogin)
-  const mockLogout = useAppStore((s) => s.mockLogout)
+  const logout = useAppStore((s) => s.logout)
   const setActiveBrand = useAppStore((s) => s.setActiveBrand)
   const createBrand = useAppStore((s) => s.createBrand)
 
   const [showLogin, setShowLogin] = useState(false)
-  const [email, setEmail] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
   const [showCreateBrand, setShowCreateBrand] = useState(false)
 
@@ -137,7 +136,7 @@ export function TopBar() {
                   )}
                   <button
                     onClick={() => {
-                      mockLogout()
+                      logout()
                       setMenuOpen(false)
                     }}
                     className="w-full rounded-lg px-2 py-1.5 text-left text-sm text-red-600 transition hover:bg-red-50"
@@ -153,36 +152,7 @@ export function TopBar() {
 
       {showLogin && (
         <Modal title="Увійти в акаунт" onClose={() => setShowLogin(false)} width="sm">
-          <p className="mb-4 text-sm text-slate-500">
-            <span className="font-medium text-amber-600">Демо-режим:</span> вхід миттєвий за email,
-            без пароля і без реального підтвердження.
-          </p>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault()
-              if (email.trim()) {
-                mockLogin(email.trim())
-                setShowLogin(false)
-                setEmail('')
-              }
-            }}
-            className="space-y-3"
-          >
-            <input
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@company.com"
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
-            />
-            <button
-              type="submit"
-              className="w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
-            >
-              Увійти
-            </button>
-          </form>
+          <LoginForm onSuccess={() => setShowLogin(false)} />
         </Modal>
       )}
 
@@ -194,8 +164,8 @@ export function TopBar() {
           </p>
           <BrandForm
             onCancel={() => setShowCreateBrand(false)}
-            onSubmit={(input) => {
-              const id = createBrand(input)
+            onSubmit={async (input) => {
+              const id = await createBrand(input)
               setShowCreateBrand(false)
               navigate(`/companies/${id}`)
             }}

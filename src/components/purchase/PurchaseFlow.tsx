@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Modal } from '../common/Modal'
 import { BrandBadge } from '../common/BrandBadge'
 import { BrandForm } from './BrandForm'
+import { LoginForm } from '../auth/LoginForm'
 import { useAppStore, type PurchaseResult } from '../../store/useAppStore'
 import { formatMoney, regionTypeLabel } from '../../lib/format'
 
@@ -21,12 +22,10 @@ export function PurchaseFlow({ locationId, onClose, onSuccess }: PurchaseFlowPro
   const myBrandIds = useAppStore((s) => s.myBrandIds)
   const brands = useAppStore((s) => s.brands)
   const activeBrandId = useAppStore((s) => s.activeBrandId)
-  const mockLogin = useAppStore((s) => s.mockLogin)
   const createBrand = useAppStore((s) => s.createBrand)
   const setActiveBrand = useAppStore((s) => s.setActiveBrand)
   const purchaseLocation = useAppStore((s) => s.purchaseLocation)
 
-  const [email, setEmail] = useState('')
   const [showBrandForm, setShowBrandForm] = useState(false)
   const [showBrandPicker, setShowBrandPicker] = useState(false)
   const [phase, setPhase] = useState<Phase>('confirm')
@@ -46,32 +45,8 @@ export function PurchaseFlow({ locationId, onClose, onSuccess }: PurchaseFlowPro
   if (!currentUser) {
     return (
       <Modal title="Увійти в акаунт" onClose={onClose} width="sm">
-        <p className="mb-4 text-sm text-slate-500">
-          Для купівлі локації потрібен акаунт із підтвердженим email.{' '}
-          <span className="font-medium text-amber-600">Демо-режим:</span> вхід миттєвий, без пароля.
-        </p>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault()
-            if (email.trim()) mockLogin(email.trim())
-          }}
-          className="space-y-3"
-        >
-          <input
-            type="email"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@company.com"
-            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
-          />
-          <button
-            type="submit"
-            className="w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
-          >
-            Увійти
-          </button>
-        </form>
+        <p className="mb-4 text-sm text-slate-500">Для купівлі локації потрібен акаунт із підтвердженим email.</p>
+        <LoginForm onSuccess={() => {}} />
       </Modal>
     )
   }
@@ -85,8 +60,8 @@ export function PurchaseFlow({ locationId, onClose, onSuccess }: PurchaseFlowPro
         </p>
         <BrandForm
           onCancel={myBrandIds.length > 0 ? () => setShowBrandForm(false) : undefined}
-          onSubmit={(input) => {
-            createBrand(input)
+          onSubmit={async (input) => {
+            await createBrand(input)
             setShowBrandForm(false)
           }}
         />
@@ -246,20 +221,19 @@ export function PurchaseFlow({ locationId, onClose, onSuccess }: PurchaseFlowPro
         </ul>
 
         <button
-          onClick={() => {
+          onClick={async () => {
             setPhase('processing')
-            window.setTimeout(() => {
-              const res = purchaseLocation(location.id, buyerBrand.id)
-              setResult(res)
-              setPhase(res.ok ? 'success' : 'error')
-            }, 700)
+            const res = await purchaseLocation(location.id, buyerBrand.id)
+            setResult(res)
+            setPhase(res.ok ? 'success' : 'error')
           }}
           className="w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
         >
           Перейти до оплати · {formatMoney(price)}
         </button>
         <p className="text-center text-[11px] text-slate-400">
-          Демо-режим: платіжні дані Stripe ще не підключені, оплата симулюється.
+          Демо-режим: платіжні дані Stripe/WayForPay ще не підключені, оплата симулюється — локація
+          зберігається в реальній базі даних.
         </p>
       </div>
     </Modal>
