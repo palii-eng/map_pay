@@ -47,12 +47,9 @@ export default function CompanyPage() {
   const selectLocation = useAppStore((s) => s.selectLocation)
   const updateBrandProfile = useAppStore((s) => s.updateBrandProfile)
   const createArticle = useAppStore((s) => s.createArticle)
-  const checkPaymentIntent = useAppStore((s) => s.checkPaymentIntent)
-  const refreshData = useAppStore((s) => s.refreshData)
   const [editing, setEditing] = useState(false)
   const [writingArticle, setWritingArticle] = useState(false)
   const [articleError, setArticleError] = useState<string | null>(null)
-  const [paymentStatus, setPaymentStatus] = useState<'checking' | 'paid' | 'pending' | null>(null)
 
   useEffect(() => {
     const state = routerLocation.state as { openArticleEditor?: boolean } | null
@@ -62,38 +59,6 @@ export default function CompanyPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routerLocation.state])
-
-  // повернення з оплати WayForPay (?payment=orderReference) — чекаємо, поки webhook
-  // підтвердить платіж, і лише тоді оновлюємо дані бренду/локацій
-  useEffect(() => {
-    const orderReference = new URLSearchParams(routerLocation.search).get('payment')
-    if (!orderReference) return
-
-    let cancelled = false
-    setPaymentStatus('checking')
-
-    async function poll(attempt: number) {
-      const status = await checkPaymentIntent(orderReference!)
-      if (cancelled) return
-      if (status === 'paid') {
-        await refreshData()
-        if (!cancelled) setPaymentStatus('paid')
-        return
-      }
-      if (attempt >= 10) {
-        setPaymentStatus('pending')
-        return
-      }
-      setTimeout(() => poll(attempt + 1), 1500)
-    }
-    poll(0)
-
-    navigate(routerLocation.pathname, { replace: true })
-    return () => {
-      cancelled = true
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
   const brandArticles = useMemo(
     () =>
@@ -146,26 +111,6 @@ export default function CompanyPage() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-3xl px-4 py-8 sm:py-10">
-        {paymentStatus === 'checking' && (
-          <div className="mb-6 flex items-center gap-2.5 rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-600 ring-1 ring-slate-200">
-            <div className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
-            Перевіряємо оплату WayForPay…
-          </div>
-        )}
-        {paymentStatus === 'paid' && (
-          <div className="mb-6 flex items-center gap-2.5 rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-700 ring-1 ring-emerald-200">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0">
-              <path d="M20 6 9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            Оплату підтверджено — локація вже ваша.
-          </div>
-        )}
-        {paymentStatus === 'pending' && (
-          <div className="mb-6 flex items-center gap-2.5 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-700 ring-1 ring-amber-200">
-            <span>⏳</span>
-            Оплату ще обробляємо — це може зайняти хвилину. Онови сторінку трохи пізніше.
-          </div>
-        )}
         <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-4">
             <BrandBadge name={brand.name} color={brand.color} logoDataUrl={brand.logoDataUrl} size={64} />

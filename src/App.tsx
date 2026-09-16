@@ -6,6 +6,7 @@ import CompanyPage from './pages/CompanyPage'
 import BlogPage from './pages/BlogPage'
 import ArticlePage from './pages/ArticlePage'
 import AuthConfirmedPage from './pages/AuthConfirmedPage'
+import PaymentConfirmedPage from './pages/PaymentConfirmedPage'
 import { useAppStore } from './store/useAppStore'
 
 export default function App() {
@@ -25,6 +26,7 @@ export default function App() {
           <Route path="/blog" element={<BlogPage />} />
           <Route path="/blog/:articleId" element={<ArticlePage />} />
           <Route path="/auth/confirmed" element={<AuthConfirmedPage />} />
+          <Route path="/payment-confirmed" element={<PaymentConfirmedPage />} />
         </Routes>
       </div>
     </div>
