@@ -5,6 +5,7 @@ import { HomePage } from './pages/HomePage'
 import CompanyPage from './pages/CompanyPage'
 import BlogPage from './pages/BlogPage'
 import ArticlePage from './pages/ArticlePage'
+import AuthConfirmedPage from './pages/AuthConfirmedPage'
 import { useAppStore } from './store/useAppStore'
 
 export default function App() {
@@ -23,6 +24,7 @@ export default function App() {
           <Route path="/companies/:brandId" element={<CompanyPage />} />
           <Route path="/blog" element={<BlogPage />} />
           <Route path="/blog/:articleId" element={<ArticlePage />} />
+          <Route path="/auth/confirmed" element={<AuthConfirmedPage />} />
         </Routes>
       </div>
     </div>

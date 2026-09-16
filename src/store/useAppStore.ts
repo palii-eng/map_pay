@@ -314,7 +314,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!supabase) return { ok: false, reason: 'Supabase не налаштовано' }
     const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: { shouldCreateUser: true },
+      options: {
+        shouldCreateUser: true,
+        // для нового користувача Supabase інколи шле лист-посилання (не код) —
+        // якщо клікнуть по ньому, ведемо на сторінку підтвердження, а не в нікуди
+        emailRedirectTo: `${window.location.origin}/auth/confirmed`,
+      },
     })
     if (error) return { ok: false, reason: error.message }
     return { ok: true }
