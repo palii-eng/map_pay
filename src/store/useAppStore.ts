@@ -82,8 +82,7 @@ interface AppState {
   init: () => Promise<void>
   selectLocation: (id: string | null) => void
 
-  requestLoginCode: (email: string) => Promise<AuthResult>
-  verifyLoginCode: (email: string, code: string) => Promise<AuthResult>
+  requestLoginLink: (email: string) => Promise<AuthResult>
   logout: () => Promise<void>
   createBrand: (input: NewBrandInput) => Promise<string>
   setActiveBrand: (id: string) => void
@@ -310,7 +309,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   selectLocation: (id) => set({ selectedLocationId: id }),
 
-  requestLoginCode: async (email) => {
+  requestLoginLink: async (email) => {
     if (!supabase) return { ok: false, reason: 'Supabase не налаштовано' }
     const { error } = await supabase.auth.signInWithOtp({
       email,
@@ -321,13 +320,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         emailRedirectTo: `${window.location.origin}/auth/confirmed`,
       },
     })
-    if (error) return { ok: false, reason: error.message }
-    return { ok: true }
-  },
-
-  verifyLoginCode: async (email, code) => {
-    if (!supabase) return { ok: false, reason: 'Supabase не налаштовано' }
-    const { error } = await supabase.auth.verifyOtp({ email, token: code, type: 'email' })
     if (error) return { ok: false, reason: error.message }
     return { ok: true }
   },

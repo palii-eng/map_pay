@@ -73,7 +73,7 @@ export function PurchaseFlow({ locationId, onClose }: PurchaseFlowProps) {
     return (
       <Modal title="Увійти в акаунт" onClose={onClose} width="sm">
         <p className="mb-4 text-sm text-slate-500">Для купівлі локації потрібен акаунт із підтвердженим email.</p>
-        <LoginForm onSuccess={() => {}} />
+        <LoginForm />
       </Modal>
     )
   }

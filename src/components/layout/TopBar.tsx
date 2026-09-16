@@ -162,7 +162,7 @@ export function TopBar() {
 
       {showLogin && (
         <Modal title="Увійти в акаунт" onClose={() => setShowLogin(false)} width="sm">
-          <LoginForm onSuccess={() => setShowLogin(false)} />
+          <LoginForm />
         </Modal>
       )}
 
